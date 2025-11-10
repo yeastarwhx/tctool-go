@@ -26,12 +26,11 @@ const (
 var (
 	globalExit      bool
 	globalExitMutex sync.RWMutex
-	tcpConn         net.Conn
-	tcpMutex        sync.Mutex
 	udpConn         *net.UDPConn
 	udpMutex        sync.Mutex
 	srcSIPAddr      *net.UDPAddr
 	srcMutex        sync.Mutex
+	connectionPool  *ConnectionPool // Per-extension connection pool
 )
 
 // Global exit flag helpers
@@ -55,6 +54,10 @@ func main() {
 	fmt.Println("Server IP:      ", ServerIP)
 	fmt.Println("Server Port:    ", ServerPort)
 	fmt.Println("========================================\n")
+
+	// Initialize connection pool for multi-extension support
+	connectionPool = NewConnectionPool(MAX_EXTENSIONS)
+	fmt.Printf("Connection pool initialized (capacity: %d)\n", MAX_EXTENSIONS)
 
 	// Initialize PJSUA
 	err := InitPJSUA(nil, "ilbc")
@@ -82,13 +85,10 @@ func main() {
 	}()
 	fmt.Println("UDP thread started (recvFromPJSIP)")
 
-	// Start TCP thread (recv_from_ts_thread)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		recvFromTS(portManager, authManager)
-	}()
-	fmt.Println("TCP thread started (recvFromTS)")
+	// NOTE: No longer start global recvFromTS thread
+	// Each extension now has its own TCP connection with dedicated reader goroutine
+	// Connections are created on-demand when SIP messages arrive
+	fmt.Println("Multi-extension mode: TCP connections created per extension on-demand")
 	fmt.Println("\nTunnel Client is running. Press Ctrl+C to exit.\n")
 
 	// Wait for signal
@@ -98,12 +98,15 @@ func main() {
 	// Set global exit flag
 	setGlobalExit(true)
 
+	// Cleanup all extension connections
+	log.Println("正在关闭所有分机连接...")
+	cleanupAllExtensions()
+
 	// Stop all active port mappings
 	log.Println("正在停止所有端口映射...")
 	portManager.StopAll(authManager.GetTSAESKey())
 
-	// Close connections
-	closeTCPConn()
+	// Close UDP connection
 	closeUDPConn()
 
 	// Wait for goroutines to finish with timeout
@@ -121,6 +124,39 @@ func main() {
 	}
 
 	fmt.Println("\nTunnel Client 已停止")
+}
+
+// cleanupAllExtensions closes all extension connections in the pool
+func cleanupAllExtensions() {
+	if connectionPool == nil {
+		return
+	}
+
+	count := 0
+	connectionPool.Connections.Range(func(key, value interface{}) bool {
+		extConn := value.(*ExtensionConnection)
+
+		// Signal shutdown
+		select {
+		case <-extConn.ShutdownChan:
+			// Already closed
+		default:
+			close(extConn.ShutdownChan)
+		}
+
+		// Close TCP connection
+		extConn.mu.Lock()
+		if extConn.TCPConn != nil {
+			extConn.TCPConn.Close()
+			extConn.TCPConn = nil
+		}
+		extConn.mu.Unlock()
+
+		count++
+		return true
+	})
+
+	log.Printf("已关闭 %d 个分机连接", count)
 }
 
 // recvFromPJSIP receives SIP messages from PJSIP and forwards to tunnel server
@@ -159,138 +195,67 @@ func recvFromPJSIP(pm *PortManager, am *AuthManager) {
 			continue
 		}
 
-		if n > 0 {
+		if n > 16 {
 			sipMsg := string(buf[:n])
-			setSrcSIPAddr(srcAddr)
+
+			// Extract extension number from SIP message
+			extNumber, err := ExtractExtension(sipMsg)
+			if err != nil {
+				log.Printf("Failed to extract extension from SIP message: %v", err)
+				log.Printf("SIP message preview (first 500 chars): %s",
+					func() string {
+						if len(sipMsg) > 500 {
+							return sipMsg[:500] + "..."
+						}
+						return sipMsg
+					}())
+				continue
+			}
+
+			// Get or create extension connection
+			ext, err := NewExtension(extNumber)
+			if err != nil {
+				log.Printf("Invalid extension number %s: %v, message discarded", extNumber, err)
+				continue
+			}
+
+			extConn, err := connectionPool.GetOrCreate(ext, pm)
+			if err != nil {
+				if err == ErrCapacityReached {
+					log.Printf("Connection pool capacity reached, rejecting extension %s", extNumber)
+					// TODO: Send SIP 503 Service Unavailable response
+				} else {
+					log.Printf("Failed to get/create connection for extension %s: %v", extNumber, err)
+				}
+				continue
+			}
+
+			// Update source address for this extension
+			extConn.SetSrcSIPAddr(srcAddr)
 
 			// Process different types of SIP messages
 			var modifiedMsg string
 			if IsINVITERequest(sipMsg) {
-				modifiedMsg, _ = HandleINVITEFromUDP(sipMsg, pm, am.GetTSAESKey())
+				modifiedMsg, _ = HandleINVITEFromUDP(sipMsg, pm, extConn.AuthManager.GetTSAESKey())
 			} else if IsSIP200OK(sipMsg) && HasSDPContent(sipMsg) {
 				modifiedMsg, _ = Handle200OKFromUDP(sipMsg, pm)
 			} else if IsBYERequest(sipMsg) || IsCANCELRequest(sipMsg) {
-				HandleCallTermination(sipMsg, pm, am.GetTSAESKey())
+				HandleCallTermination(sipMsg, pm, extConn.AuthManager.GetTSAESKey())
 				modifiedMsg = sipMsg
 			} else {
 				modifiedMsg = sipMsg
 			}
 
-			// Send to TCP server
-			sendSIPToTCP(modifiedMsg, am.GetTSAESKey())
-		}
-	}
-}
-
-// recvFromTS receives SIP messages from tunnel server and forwards to PJSIP
-func recvFromTS(pm *PortManager, am *AuthManager) {
-	// Connect to TS server with retry
-	conn, err := ConnectToServer(2)
-	if err != nil {
-		log.Printf("Failed to connect to server: %v", err)
-		return
-	}
-	defer conn.Close()
-
-	// Authenticate with TS server with retry
-	err = am.AuthenticateWithRetry(conn, 1)
-	if err != nil {
-		log.Printf("Failed to authenticate: %v", err)
-		return
-	}
-
-	if am.GetTSAESKey() == "" {
-		log.Printf("Failed to obtain ts_aeskey")
-		return
-	}
-
-	setTCPConn(conn)
-
-	for !isGlobalExit() {
-		// Set read timeout
-		conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-
-		// Read header
-		tunnelType, length, err := TCReadDataHead(conn)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
+			// Send to extension's TCP connection
+			err = extConn.SendSIP(modifiedMsg, extConn.AuthManager.GetTSAESKey())
+			if err != nil {
+				log.Printf("Failed to send SIP message for extension %s: %v", extNumber, err)
 			}
-			if isGlobalExit() {
-				break
-			}
-			log.Printf("TCP read header error: %v", err)
-			break
 		}
-
-		if length <= 0 || length > BufSize {
-			continue
-		}
-
-		// Read encrypted data
-		encryptedData, err := ReadTunnelData(conn, length)
-		if err != nil {
-			if isGlobalExit() {
-				break
-			}
-			log.Printf("TCP read data error: %v", err)
-			continue
-		}
-
-		// Only process SIP types
-		if tunnelType != TunnelSIPLinkus && tunnelType != TunnelSIPIPPhone {
-			continue
-		}
-
-		// Decrypt data
-		sipData, err := AESDecryptPKCS5(encryptedData, []byte(am.GetTSAESKey()))
-		if err != nil {
-			log.Printf("Failed to decrypt SIP data: %v", err)
-			continue
-		}
-
-		sipMsg := string(sipData)
-
-		// Process different types of SIP messages
-		var outputMsg string
-		if (IsSIP200OK(sipMsg) || IsINVITERequest(sipMsg)) && HasSDPContent(sipMsg) {
-			if IsSIP200OK(sipMsg) {
-				outputMsg, _ = Handle200OKFromTCP(sipMsg, pm)
-			} else if IsINVITERequest(sipMsg) {
-				outputMsg, _ = HandleINVITEFromTCP(sipMsg, pm, am.GetTSAESKey())
-			}
-		} else if IsBYERequest(sipMsg) || IsCANCELRequest(sipMsg) {
-			HandleCallTermination(sipMsg, pm, am.GetTSAESKey())
-			outputMsg = sipMsg
-		} else {
-			outputMsg = sipMsg
-		}
-
-		if outputMsg == "" {
-			outputMsg = sipMsg
-		}
-
-		// Send to UDP client
-		sendSIPToUDP(outputMsg)
 	}
 }
 
 // Helper functions for connection management
-func setTCPConn(conn net.Conn) {
-	tcpMutex.Lock()
-	defer tcpMutex.Unlock()
-	tcpConn = conn
-}
-
-func closeTCPConn() {
-	tcpMutex.Lock()
-	defer tcpMutex.Unlock()
-	if tcpConn != nil {
-		tcpConn.Close()
-		tcpConn = nil
-	}
-}
-
 func setUDPConn(conn *net.UDPConn) {
 	udpMutex.Lock()
 	defer udpMutex.Unlock()
@@ -318,39 +283,7 @@ func getSrcSIPAddr() *net.UDPAddr {
 	return srcSIPAddr
 }
 
-// sendSIPToTCP sends SIP message to TCP server
-func sendSIPToTCP(sipData string, tsAESKey string) {
-	tcpMutex.Lock()
-	defer tcpMutex.Unlock()
-
-	if tcpConn == nil {
-		return
-	}
-
-	// Encrypt SIP data
-	encrypted, err := AESEncryptPKCS5([]byte(sipData), []byte(tsAESKey))
-	if err != nil {
-		log.Printf("Failed to encrypt SIP data: %v", err)
-		return
-	}
-
-	// Pack data
-	packed, err := TCPackSIPData(encrypted)
-	if err != nil {
-		log.Printf("Failed to pack SIP data: %v", err)
-		return
-	}
-
-	// Send
-	_, err = tcpConn.Write(packed)
-	if err != nil {
-		log.Printf("Failed to send SIP to TCP: %v", err)
-		tcpConn.Close()
-		tcpConn = nil
-	}
-}
-
-// sendSIPToUDP sends SIP message to UDP client
+// sendSIPToUDP sends SIP message to UDP client (global source address - legacy)
 func sendSIPToUDP(sipData string) {
 	udpMutex.Lock()
 	conn := udpConn
@@ -364,7 +297,28 @@ func sendSIPToUDP(sipData string) {
 	if targetAddr == nil {
 		return
 	}
+	log.Printf("Sending SIP to UDP %s:\n%s", targetAddr.String(), sipData)
+	_, err := conn.WriteToUDP([]byte(sipData), targetAddr)
+	if err != nil {
+		log.Printf("Failed to send SIP to UDP: %v", err)
+	}
+}
 
+// sendSIPToUDPAddr sends SIP message to a specific UDP address
+func sendSIPToUDPAddr(sipData string, targetAddr *net.UDPAddr) {
+	udpMutex.Lock()
+	conn := udpConn
+	udpMutex.Unlock()
+
+	if conn == nil {
+		return
+	}
+
+	if targetAddr == nil {
+		return
+	}
+
+	log.Printf("Sending SIP to UDP %s:\n%s", targetAddr.String(), sipData)
 	_, err := conn.WriteToUDP([]byte(sipData), targetAddr)
 	if err != nil {
 		log.Printf("Failed to send SIP to UDP: %v", err)
@@ -629,6 +583,9 @@ func (pm *PortManager) RemoveMapping(callID string) (*PortMappingNode, error) {
 
 	// Signal threads to exit
 	if node != nil {
+		log.Printf("[PortManager] Cleaning up mapping for Call-ID: %s (Audio RTP: %d, RTCP: %d)",
+			callID, node.TCAudioRTP, node.TCAudioRTCP)
+
 		node.ShouldExit = true
 
 		// Close channels to wake up goroutines (ignore panic if already closed)
@@ -647,7 +604,9 @@ func (pm *PortManager) RemoveMapping(callID string) (*PortMappingNode, error) {
 		safeCloseChannel(node.VideoRTCPChan)
 
 		// Wait for goroutines to exit (with socket timeout of 500ms, threads will exit within 600ms)
+		log.Printf("[PortManager] Waiting %v for goroutines to exit...", GoroutineExitTimeout)
 		time.Sleep(GoroutineExitTimeout)
+		log.Printf("[PortManager] Port cleanup completed for Call-ID: %s", callID)
 	}
 
 	return node, nil

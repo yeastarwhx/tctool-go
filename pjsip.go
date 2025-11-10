@@ -1,7 +1,7 @@
 package main
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../ctool/include -I${SRCDIR}/../ctool/include/include
+#cgo CFLAGS: -I /home/test/tools/ctool/include -I /home/test/tools/ctool/include/include
 #cgo LDFLAGS: -L${SRCDIR}/../ctool/lib -lyspjsua -lpjsua -lpjsip -lpjmedia -lpjnath -lpjlib-util -lpj -lssl -lcrypto -lpthread
 
 #include <stdlib.h>

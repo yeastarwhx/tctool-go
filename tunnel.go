@@ -513,7 +513,10 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 		log.Printf("[%s] 绑定 UDP socket 失败 port=%d: %v", portType, localPort, err)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		conn.Close()
+		log.Printf("[%s] UDP socket closed for port %d", portType, localPort)
+	}()
 
 	// Set socket timeout
 	conn.SetReadDeadline(time.Now().Add(SocketTimeout))

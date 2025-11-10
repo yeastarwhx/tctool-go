@@ -59,13 +59,6 @@ func main() {
 	connectionPool = NewConnectionPool(MAX_EXTENSIONS)
 	fmt.Printf("Connection pool initialized (capacity: %d)\n", MAX_EXTENSIONS)
 
-	// Initialize PJSUA
-	err := InitPJSUA(nil, "ilbc")
-	if err != nil {
-		log.Fatalf("Failed to initialize PJSUA: %v", err)
-	}
-	defer DestroyPJSUA()
-
 	// Create managers
 	portManager := NewPortManager()
 	authManager := NewAuthManager()
@@ -77,13 +70,13 @@ func main() {
 	// Create wait group for goroutines
 	var wg sync.WaitGroup
 
-	// Start UDP thread (recv_from_pjsip_thread)
+	// Start UDP thread (receives SIP messages from PBX)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		recvFromPJSIP(portManager, authManager)
+		recvFromPBX(portManager, authManager)
 	}()
-	fmt.Println("UDP thread started (recvFromPJSIP)")
+	fmt.Println("UDP thread started (recvFromPBX)")
 
 	// NOTE: No longer start global recvFromTS thread
 	// Each extension now has its own TCP connection with dedicated reader goroutine
@@ -159,8 +152,8 @@ func cleanupAllExtensions() {
 	log.Printf("已关闭 %d 个分机连接", count)
 }
 
-// recvFromPJSIP receives SIP messages from PJSIP and forwards to tunnel server
-func recvFromPJSIP(pm *PortManager, am *AuthManager) {
+// recvFromPBX receives SIP messages from PBX and forwards to tunnel server
+func recvFromPBX(pm *PortManager, am *AuthManager) {
 	// Bind UDP socket
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", LocalUDPPort))
 	if err != nil {

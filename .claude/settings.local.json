@@ -5,7 +5,12 @@
       "Bash(nul)",
       "Bash(bash:*)",
       "Bash(git rev-parse:*)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(go get:*)",
+      "Bash(rename:*)",
+      "WebFetch(domain:pkg.go.dev)"
     ],
     "deny": [],
     "ask": []

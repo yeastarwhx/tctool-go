@@ -528,7 +528,7 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 	var sourcePort int
 	var sourceIP string
 
-	for !node.ShouldExit && !isGlobalExit() {
+	for !node.ShouldExit {
 		// Check idle timeout (5 minutes without data)
 		if time.Since(lastActivityTime) > RTPIdleTimeout {
 			log.Printf("[%s] RTP端口 %d 空闲超过 %v，自动退出线程",
@@ -544,7 +544,7 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
-			if node.ShouldExit || isGlobalExit() {
+			if node.ShouldExit {
 				break
 			}
 			continue

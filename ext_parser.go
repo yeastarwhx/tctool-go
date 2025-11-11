@@ -49,7 +49,7 @@ func ExtractSIPHeader(msg string, headerName string) string {
 	for _, line := range lines {
 		if strings.HasPrefix(line, prefix) {
 			value := strings.TrimSpace(line[len(prefix):])
-			fmt.Printf("[DEBUG] Found header %s: %s\n", headerName, value)
+			//fmt.Printf("[DEBUG] Found header %s: %s\n", headerName, value)
 			return value
 		}
 	}
@@ -61,7 +61,7 @@ func ExtractSIPHeader(msg string, headerName string) string {
 		for _, line := range lines {
 			if strings.HasPrefix(line, prefix) {
 				value := strings.TrimSpace(line[len(prefix):])
-				fmt.Printf("[DEBUG] Found compact header %s: %s\n", headerName, value)
+				//fmt.Printf("[DEBUG] Found compact header %s: %s\n", headerName, value)
 				return value
 			}
 		}
@@ -163,23 +163,47 @@ func ExtractExtensionFromInvite(msg string) string {
 }
 
 // ExtractExtensionFromNonInvite extracts extension from non-INVITE messages
-// Priority: From > To > Contact (with non-numeric fallback)
+// For responses (200 OK, etc.): use To header (request originator)
+// For requests (BYE, CANCEL, etc.): use From header (request sender)
 func ExtractExtensionFromNonInvite(msg string) string {
-	// Try From header first
-	fromHeader := ExtractSIPHeader(msg, "From")
-	if fromHeader != "" {
-		userPart := ParseSIPURI(fromHeader)
-		if IsNumeric(userPart) && ValidateExtension(userPart) {
-			return userPart
-		}
-	}
+	// Check if this is a response (status line starts with "SIP/2.0")
+	isResponse := strings.HasPrefix(msg, "SIP/2.0")
 
-	// Try To header second
-	toHeader := ExtractSIPHeader(msg, "To")
-	if toHeader != "" {
-		userPart := ParseSIPURI(toHeader)
-		if IsNumeric(userPart) && ValidateExtension(userPart) {
-			return userPart
+	if isResponse {
+		// For responses, use To header first (request originator)
+		toHeader := ExtractSIPHeader(msg, "To")
+		if toHeader != "" {
+			userPart := ParseSIPURI(toHeader)
+			if IsNumeric(userPart) && ValidateExtension(userPart) {
+				return userPart
+			}
+		}
+
+		// Fallback to From header
+		fromHeader := ExtractSIPHeader(msg, "From")
+		if fromHeader != "" {
+			userPart := ParseSIPURI(fromHeader)
+			if IsNumeric(userPart) && ValidateExtension(userPart) {
+				return userPart
+			}
+		}
+	} else {
+		// For requests, use From header first (request sender)
+		fromHeader := ExtractSIPHeader(msg, "From")
+		if fromHeader != "" {
+			userPart := ParseSIPURI(fromHeader)
+			if IsNumeric(userPart) && ValidateExtension(userPart) {
+				return userPart
+			}
+		}
+
+		// Fallback to To header
+		toHeader := ExtractSIPHeader(msg, "To")
+		if toHeader != "" {
+			userPart := ParseSIPURI(toHeader)
+			if IsNumeric(userPart) && ValidateExtension(userPart) {
+				return userPart
+			}
 		}
 	}
 
@@ -188,28 +212,6 @@ func ExtractExtensionFromNonInvite(msg string) string {
 	if contactHeader != "" {
 		userPart := ParseSIPURI(contactHeader)
 		if IsNumeric(userPart) && ValidateExtension(userPart) {
-			return userPart
-		}
-	}
-
-	// Non-numeric fallback: try From, To, Contact again but accept non-numeric
-	if fromHeader != "" {
-		userPart := ParseSIPURI(fromHeader)
-		if userPart != "" && userPart != "unknown" && ValidateExtension(userPart) {
-			return userPart
-		}
-	}
-
-	if toHeader != "" {
-		userPart := ParseSIPURI(toHeader)
-		if userPart != "" && userPart != "unknown" && ValidateExtension(userPart) {
-			return userPart
-		}
-	}
-
-	if contactHeader != "" {
-		userPart := ParseSIPURI(contactHeader)
-		if userPart != "" && userPart != "unknown" && ValidateExtension(userPart) {
 			return userPart
 		}
 	}

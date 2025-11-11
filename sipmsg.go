@@ -6,11 +6,6 @@ import (
 	"strings"
 )
 
-// Constants for SIP configuration
-const (
-	ContactPort = 5060
-)
-
 // Variables for SIP configuration (need to take address)
 var (
 	LocalIP     = "192.168.12.18"
@@ -35,27 +30,6 @@ func IsBYERequest(msg string) bool {
 // IsCANCELRequest checks if message is CANCEL request
 func IsCANCELRequest(msg string) bool {
 	return strings.HasPrefix(msg, "CANCEL")
-}
-
-// HasSDPContent checks if SIP message contains SDP content
-func HasSDPContent(msg string) bool {
-	if !strings.Contains(msg, "Content-Length:") {
-		return false
-	}
-
-	lines := strings.Split(msg, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "Content-Length:") {
-			parts := strings.Split(line, ":")
-			if len(parts) >= 2 {
-				length := strings.TrimSpace(parts[1])
-				if length == "0" {
-					return false
-				}
-			}
-		}
-	}
-	return true
 }
 
 // HandleINVITEFromUDP handles INVITE request from UDP (PBX to Server)
@@ -266,7 +240,7 @@ func HandleINVITEFromTCP(sipMsg string, pm *PortManager, tsAESKey string) (strin
 		modified, err := ModifySIPPacket(
 			sipMsg,
 			&LocalIP,            // Modify Contact host
-			ContactPort,         // Modify Contact port
+			LocalUDPPort,        // Modify Contact port
 			mapping.TCAudioRTP,  // New SDP audio RTP port
 			mapping.TCAudioRTCP, // New SDP audio RTCP port
 			mapping.TCVideoRTP,  // New SDP video RTP port
@@ -317,7 +291,7 @@ func Handle200OKFromTCP(sipMsg string, pm *PortManager) (string, error) {
 		modified, err := ModifySIPPacket(
 			sipMsg,
 			&LocalIP,            // Modify Contact host
-			ContactPort,         // Modify Contact port
+			LocalUDPPort,        // Modify Contact port
 			mapping.TCAudioRTP,  // New SDP audio RTP port
 			mapping.TCAudioRTCP, // New SDP audio RTCP port
 			mapping.TCVideoRTP,  // New SDP video RTP port

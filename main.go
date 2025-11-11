@@ -15,7 +15,7 @@ import (
 
 // Configuration constants
 const (
-	LocalUDPPort = 5060
+	LocalUDPPort = 5070
 	ServerIP     = "172.16.17.22"
 	ServerPort   = 6060
 	BufSize      = 4096
@@ -24,27 +24,10 @@ const (
 
 // Global state
 var (
-	globalExit      bool
-	globalExitMutex sync.RWMutex
-	udpConn         *net.UDPConn
-	udpMutex        sync.Mutex
-	srcSIPAddr      *net.UDPAddr
-	srcMutex        sync.Mutex
-	connectionPool  *ConnectionPool // Per-extension connection pool
+	udpConn        *net.UDPConn
+	udpMutex       sync.Mutex
+	connectionPool *ConnectionPool // Per-extension connection pool
 )
-
-// Global exit flag helpers
-func isGlobalExit() bool {
-	globalExitMutex.RLock()
-	defer globalExitMutex.RUnlock()
-	return globalExit
-}
-
-func setGlobalExit(val bool) {
-	globalExitMutex.Lock()
-	defer globalExitMutex.Unlock()
-	globalExit = val
-}
 
 func main() {
 	fmt.Println("========================================")
@@ -67,22 +50,25 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// Create shutdown context channel
+	shutdownChan := make(chan struct{})
+
 	// Create wait group for goroutines
 	var wg sync.WaitGroup
 
-	// Start UDP thread (receives SIP messages from PBX)
+	// Start UDP thread (receives SIP messages from local)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		recvFromPBX(portManager, authManager)
+		recvFromLocal(portManager, authManager, shutdownChan)
 	}()
-	fmt.Println("UDP thread started (recvFromPBX)")
+	fmt.Println("UDP thread started (recvFromLocal)")
 
 	// Start idle port mapping cleanup goroutine
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cleanupIdlePortMappings(portManager, authManager)
+		cleanupIdlePortMappings(portManager, authManager, shutdownChan)
 	}()
 	fmt.Println("Idle port mapping cleanup goroutine started")
 
@@ -96,8 +82,8 @@ func main() {
 	<-sigChan
 	fmt.Println("\n收到关闭信号，正在优雅退出...")
 
-	// Set global exit flag
-	setGlobalExit(true)
+	// Signal shutdown to all goroutines
+	close(shutdownChan)
 
 	// Cleanup all extension connections
 	log.Println("正在关闭所有分机连接...")
@@ -160,8 +146,8 @@ func cleanupAllExtensions() {
 	log.Printf("已关闭 %d 个分机连接", count)
 }
 
-// recvFromPBX receives SIP messages from PBX and forwards to tunnel server
-func recvFromPBX(pm *PortManager, am *AuthManager) {
+// recvFromLocal receives SIP messages from local network and forwards to tunnel server
+func recvFromLocal(pm *PortManager, am *AuthManager, shutdownChan <-chan struct{}) {
 	// Bind UDP socket
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", LocalUDPPort))
 	if err != nil {
@@ -180,7 +166,14 @@ func recvFromPBX(pm *PortManager, am *AuthManager) {
 
 	buf := make([]byte, BufSize)
 
-	for !isGlobalExit() {
+	for {
+		// Check shutdown signal
+		select {
+		case <-shutdownChan:
+			return
+		default:
+		}
+
 		// Set read timeout
 		conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 
@@ -189,8 +182,11 @@ func recvFromPBX(pm *PortManager, am *AuthManager) {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
-			if isGlobalExit() {
-				break
+			// Check shutdown again after error
+			select {
+			case <-shutdownChan:
+				return
+			default:
 			}
 			log.Printf("UDP read error: %v", err)
 			continue
@@ -198,7 +194,7 @@ func recvFromPBX(pm *PortManager, am *AuthManager) {
 
 		if n > 16 {
 			sipMsg := string(buf[:n])
-
+			log.Printf("####Received SIP from %s#####\n%s", srcAddr.String(), sipMsg)
 			// Extract extension number from SIP message
 			extNumber, err := ExtractExtension(sipMsg)
 			if err != nil {
@@ -212,7 +208,7 @@ func recvFromPBX(pm *PortManager, am *AuthManager) {
 					}())
 				continue
 			}
-
+			log.Printf("########extension#########: %v\n\n", extNumber)
 			// Get or create extension connection
 			ext, err := NewExtension(extNumber)
 			if err != nil {
@@ -238,7 +234,7 @@ func recvFromPBX(pm *PortManager, am *AuthManager) {
 			var modifiedMsg string
 			if IsINVITERequest(sipMsg) {
 				modifiedMsg, _ = HandleINVITEFromUDP(sipMsg, pm, extConn.AuthManager.GetTSAESKey())
-			} else if IsSIP200OK(sipMsg) && HasSDPContent(sipMsg) {
+			} else if IsSIP200OK(sipMsg) {
 				modifiedMsg, _ = Handle200OKFromUDP(sipMsg, pm)
 			} else if IsBYERequest(sipMsg) || IsCANCELRequest(sipMsg) {
 				HandleCallTermination(sipMsg, pm, extConn.AuthManager.GetTSAESKey())
@@ -272,39 +268,6 @@ func closeUDPConn() {
 	}
 }
 
-func setSrcSIPAddr(addr *net.UDPAddr) {
-	srcMutex.Lock()
-	defer srcMutex.Unlock()
-	srcSIPAddr = addr
-}
-
-func getSrcSIPAddr() *net.UDPAddr {
-	srcMutex.Lock()
-	defer srcMutex.Unlock()
-	return srcSIPAddr
-}
-
-// sendSIPToUDP sends SIP message to UDP client (global source address - legacy)
-func sendSIPToUDP(sipData string) {
-	udpMutex.Lock()
-	conn := udpConn
-	udpMutex.Unlock()
-
-	if conn == nil {
-		return
-	}
-
-	targetAddr := getSrcSIPAddr()
-	if targetAddr == nil {
-		return
-	}
-	log.Printf("Sending SIP to UDP %s:\n%s", targetAddr.String(), sipData)
-	_, err := conn.WriteToUDP([]byte(sipData), targetAddr)
-	if err != nil {
-		log.Printf("Failed to send SIP to UDP: %v", err)
-	}
-}
-
 // sendSIPToUDPAddr sends SIP message to a specific UDP address
 func sendSIPToUDPAddr(sipData string, targetAddr *net.UDPAddr) {
 	udpMutex.Lock()
@@ -319,7 +282,7 @@ func sendSIPToUDPAddr(sipData string, targetAddr *net.UDPAddr) {
 		return
 	}
 
-	log.Printf("Sending SIP to UDP %s:\n%s", targetAddr.String(), sipData)
+	log.Printf("\nSending SIP to UDP %s:\n%s", targetAddr.String(), sipData)
 	_, err := conn.WriteToUDP([]byte(sipData), targetAddr)
 	if err != nil {
 		log.Printf("Failed to send SIP to UDP: %v", err)
@@ -679,13 +642,15 @@ func (pm *PortManager) StopAll(tsAESKey string) {
 
 // cleanupIdlePortMappings periodically checks and cleans up idle port mappings
 // that haven't received RTP data for more than RTPIdleTimeout (5 minutes)
-func cleanupIdlePortMappings(pm *PortManager, am *AuthManager) {
+func cleanupIdlePortMappings(pm *PortManager, am *AuthManager, shutdownChan <-chan struct{}) {
 	// Check every minute
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	for !isGlobalExit() {
+	for {
 		select {
+		case <-shutdownChan:
+			return
 		case <-ticker.C:
 			// Get all mappings
 			mappings := pm.GetAllMappings()
@@ -738,12 +703,6 @@ func cleanupIdlePortMappings(pm *PortManager, am *AuthManager) {
 						log.Printf("[IdleCleanup] 端口映射已清理 (CallID=%s)", callID)
 					}
 				}
-			}
-
-		case <-time.After(2 * time.Second):
-			// Check exit condition every 2 seconds
-			if isGlobalExit() {
-				return
 			}
 		}
 	}

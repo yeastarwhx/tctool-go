@@ -307,11 +307,6 @@ func (ec *ExtensionConnection) readFromTCP() {
 		default:
 		}
 
-		// Check if we should exit
-		if isGlobalExit() {
-			return
-		}
-
 		ec.mu.RLock()
 		conn := ec.TCPConn
 		ec.mu.RUnlock()
@@ -331,8 +326,11 @@ func (ec *ExtensionConnection) readFromTCP() {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
-			if isGlobalExit() {
+			// Check shutdown on error
+			select {
+			case <-ec.ShutdownChan:
 				return
+			default:
 			}
 
 			// Handle EOF or connection errors - cleanup and exit
@@ -354,8 +352,11 @@ func (ec *ExtensionConnection) readFromTCP() {
 		// Read encrypted data
 		encryptedData, err := ReadTunnelData(conn, length)
 		if err != nil {
-			if isGlobalExit() {
+			// Check shutdown on error
+			select {
+			case <-ec.ShutdownChan:
 				return
+			default:
 			}
 			log.Printf("[Extension %s] TCP read data error: %v", ec.Extension.Number, err)
 			continue
@@ -389,7 +390,7 @@ func (ec *ExtensionConnection) readFromTCP() {
 
 		// Process different types of SIP messages
 		var outputMsg string
-		if (IsSIP200OK(sipMsg) || IsINVITERequest(sipMsg)) && HasSDPContent(sipMsg) {
+		if (IsSIP200OK(sipMsg) || IsINVITERequest(sipMsg)) {
 			if IsSIP200OK(sipMsg) {
 				outputMsg, _ = Handle200OKFromTCP(sipMsg, ec.GlobalPortMgr)
 			} else if IsINVITERequest(sipMsg) {

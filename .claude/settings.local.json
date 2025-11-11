@@ -1,6 +1,6 @@
 {
   "env": {
-    "ANTHROPIC_API_KEY": "sk-DRj9XKBuVxjxcrpoVrBVdnuV07WmrX0JnjX2LMp391DmV2rF",
+    "ANTHROPIC_API_KEY": "sk-M9KFDopYW9dxTELjs50I48XnGByeBbMfKBFpOCNPDEyLz4Ix",
     "ANTHROPIC_BASE_URL": "https://code.ai2api.dev"
   },
   "permissions": {
@@ -14,7 +14,8 @@
       "WebFetch(domain:github.com)",
       "Bash(go get:*)",
       "Bash(rename:*)",
-      "WebFetch(domain:pkg.go.dev)"
+      "WebFetch(domain:pkg.go.dev)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

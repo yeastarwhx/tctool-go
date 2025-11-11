@@ -16,14 +16,13 @@ import (
 	"io"
 	"log"
 	"net"
-	"strings"
 	"time"
 )
 
 const (
-	LocalIPPrefix        = "192.168"
 	SocketTimeout        = 500 * time.Millisecond
 	GoroutineExitTimeout = 600 * time.Millisecond
+	RTPIdleTimeout       = 5 * time.Minute // 5分钟无RTP数据则超时退出
 )
 
 // ==================== Tunnel Data & Encryption ====================
@@ -498,6 +497,7 @@ func StartPortForwarding(node *PortMappingNode, tsAESKey string) error {
 }
 
 // handlePortForwarding handles RTP/RTCP packet forwarding for a specific port
+// Automatically exits if no data received for RTPIdleTimeout (5 minutes)
 func handlePortForwarding(node *PortMappingNode, localPort int,
 	portType string, tsAESKey string) {
 
@@ -518,6 +518,9 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 		log.Printf("[%s] UDP socket closed for port %d", portType, localPort)
 	}()
 
+	// Initialize last activity time
+	lastActivityTime := time.Now()
+
 	// Set socket timeout
 	conn.SetReadDeadline(time.Now().Add(SocketTimeout))
 
@@ -526,6 +529,13 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 	var sourceIP string
 
 	for !node.ShouldExit && !isGlobalExit() {
+		// Check idle timeout (5 minutes without data)
+		if time.Since(lastActivityTime) > RTPIdleTimeout {
+			log.Printf("[%s] RTP端口 %d 空闲超过 %v，自动退出线程",
+				portType, localPort, RTPIdleTimeout)
+			break
+		}
+
 		// Update deadline
 		conn.SetReadDeadline(time.Now().Add(SocketTimeout))
 
@@ -544,11 +554,18 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 			continue
 		}
 
+		// Update activity time when data is received
+		node.mutex.Lock()
+		node.LastActivityAt = time.Now()
+		lastActivityTime = node.LastActivityAt
+		node.mutex.Unlock()
+
 		clientIP := clientAddr.IP.String()
 		clientPort := clientAddr.Port
 
-		// Check if from local client (192.168.x.x network)
-		isLocalClient := strings.HasPrefix(clientIP, LocalIPPrefix)
+		// Check if from local client (not from tunnel server)
+		// If the packet is NOT from the tunnel server IP, it's from local client
+		isLocalClient := clientIP != ServerIP
 
 		if isLocalClient {
 			// Packet from local client, forward to server
@@ -557,6 +574,8 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 			if sourcePort == 0 {
 				sourcePort = clientPort
 				sourceIP = clientIP
+				log.Printf("[%s] 首次收到RTP数据 port=%d from %s:%d",
+					portType, localPort, sourceIP, sourcePort)
 			}
 
 			// Read the latest PBX info and port mappings from node
@@ -645,5 +664,13 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 				}
 			}
 		}
+	}
+
+	// Thread exit: Clean up port mapping if idle timeout occurred
+	if time.Since(lastActivityTime) > RTPIdleTimeout {
+		log.Printf("[%s] 因空闲超时退出，正在清理端口映射 CallID=%s",
+			portType, node.CallID)
+		// Note: Actual cleanup happens in PortManager.RemoveMapping
+		// which is called when BYE/CANCEL is received or by idle cleanup goroutine
 	}
 }

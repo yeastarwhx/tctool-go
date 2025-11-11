@@ -78,6 +78,14 @@ func main() {
 	}()
 	fmt.Println("UDP thread started (recvFromPBX)")
 
+	// Start idle port mapping cleanup goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		cleanupIdlePortMappings(portManager, authManager)
+	}()
+	fmt.Println("Idle port mapping cleanup goroutine started")
+
 	// NOTE: No longer start global recvFromTS thread
 	// Each extension now has its own TCP connection with dedicated reader goroutine
 	// Connections are created on-demand when SIP messages arrive
@@ -479,7 +487,8 @@ type PortMappingNode struct {
 	VideoRTPChan  chan bool
 	VideoRTCPChan chan bool
 
-	CreatedAt time.Time
+	CreatedAt      time.Time
+	LastActivityAt time.Time // 最后一次RTP数据活动时间
 
 	// Mutex to protect PBX port updates
 	mutex sync.RWMutex
@@ -550,7 +559,9 @@ func (pm *PortManager) AddMapping(node *PortMappingNode) error {
 		return nil // Already exists, not an error
 	}
 
-	node.CreatedAt = time.Now()
+	now := time.Now()
+	node.CreatedAt = now
+	node.LastActivityAt = now // Initialize with creation time
 	pm.mappings[node.CallID] = node
 	return nil
 }
@@ -664,4 +675,76 @@ func (pm *PortManager) StopAll(tsAESKey string) {
 
 	// Wait for goroutines to exit
 	time.Sleep(GoroutineExitTimeout + 100*time.Millisecond)
+}
+
+// cleanupIdlePortMappings periodically checks and cleans up idle port mappings
+// that haven't received RTP data for more than RTPIdleTimeout (5 minutes)
+func cleanupIdlePortMappings(pm *PortManager, am *AuthManager) {
+	// Check every minute
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for !isGlobalExit() {
+		select {
+		case <-ticker.C:
+			// Get all mappings
+			mappings := pm.GetAllMappings()
+
+			for _, mapping := range mappings {
+				// Check if mapping is idle
+				mapping.mutex.RLock()
+				lastActivity := mapping.LastActivityAt
+				callID := mapping.CallID
+				mapping.mutex.RUnlock()
+
+				// Calculate idle time
+				idleTime := time.Since(lastActivity)
+
+				// If idle for more than RTPIdleTimeout, clean it up
+				if idleTime > RTPIdleTimeout {
+					log.Printf("[IdleCleanup] 端口映射空闲超过 %v (CallID=%s, idle=%v)，正在清理...",
+						RTPIdleTimeout, callID, idleTime)
+
+					// Get mapping again to collect ports
+					node := pm.FindMapping(callID)
+					if node != nil {
+						// Collect TS ports to release
+						var ports []int
+						node.mutex.RLock()
+						if node.TSAudioRTP > 0 {
+							ports = append(ports, node.TSAudioRTP)
+						}
+						if node.TSAudioRTCP > 0 {
+							ports = append(ports, node.TSAudioRTCP)
+						}
+						if node.TSVideoRTP > 0 {
+							ports = append(ports, node.TSVideoRTP)
+						}
+						if node.TSVideoRTCP > 0 {
+							ports = append(ports, node.TSVideoRTCP)
+						}
+						node.mutex.RUnlock()
+
+						// Release ports on server
+						if len(ports) > 0 {
+							err := ReleaseRTPPorts(ports, am.GetTSAESKey())
+							if err != nil {
+								log.Printf("[IdleCleanup] 释放服务器端口失败 (CallID=%s): %v", callID, err)
+							}
+						}
+
+						// Remove mapping (this will also trigger goroutine exit)
+						pm.RemoveMapping(callID)
+						log.Printf("[IdleCleanup] 端口映射已清理 (CallID=%s)", callID)
+					}
+				}
+			}
+
+		case <-time.After(2 * time.Second):
+			// Check exit condition every 2 seconds
+			if isGlobalExit() {
+				return
+			}
+		}
+	}
 }

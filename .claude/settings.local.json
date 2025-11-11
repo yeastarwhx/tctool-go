@@ -1,4 +1,8 @@
 {
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-DRj9XKBuVxjxcrpoVrBVdnuV07WmrX0JnjX2LMp391DmV2rF",
+    "ANTHROPIC_BASE_URL": "https://code.ai2api.dev"
+  },
   "permissions": {
     "allow": [
       "Bash(git fetch:*)",

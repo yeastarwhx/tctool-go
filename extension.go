@@ -13,11 +13,9 @@ import (
 	"time"
 )
 
-// Global server configuration (reuse from main.go)
-var (
-	serverIP   = ServerIP
-	serverPort = fmt.Sprintf("%d", ServerPort)
-)
+// Note: serverIP and serverPort are now accessed from main.go's ServerIP and ServerPort variables
+// which are set via command line flags before any connections are made
+
 
 // ===================================================================
 // Constants for Extension Configuration
@@ -469,8 +467,9 @@ func (ec *ExtensionConnection) connectAndAuthenticate() error {
 	// Transition to CONNECTING state
 	ec.State.Store(uint32(CONNECTING))
 
-	// Connect to tunnel server (use global server config)
-	tcpConn, err := net.DialTimeout("tcp", serverIP+":"+serverPort, 5*time.Second)
+	// Connect to tunnel server (use global server config from main.go)
+	serverAddr := fmt.Sprintf("%s:%d", ServerIP, ServerPort)
+	tcpConn, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
 	if err != nil {
 		ec.State.Store(uint32(DISCONNECTED))
 		return ErrConnectionFailed

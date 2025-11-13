@@ -3,23 +3,29 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
 )
 
-// Configuration constants
+// Configuration constants (immutable)
 const (
-	LocalUDPPort = 5070
-	ServerIP     = "172.16.17.22"
-	ServerPort   = 6060
-	BufSize      = 4096
-	HeaderSize   = 80
+	BufSize    = 4096
+	HeaderSize = 80
+)
+
+// Configuration variables (can be set via command line flags)
+var (
+	LocalUDPPort int
+	ServerIP     string
+	ServerPort   int
 )
 
 // Global state
@@ -30,13 +36,70 @@ var (
 )
 
 func main() {
+	// Define command line flags (no defaults for required params)
+	localPort := flag.Int("local-port", 0, "Local UDP port for SIP (required)")
+	localIP := flag.String("local-ip", "", "Local IP address for SIP Contact (required)")
+	serverIP := flag.String("server", "", "Tunnel server IP address (required)")
+	serverPort := flag.Int("port", 0, "Tunnel server port (required)")
+
+	flag.Parse()
+
+	// Validate required parameters
+	if *localPort == 0 {
+		fmt.Println("错误: 缺少必需参数 -local-port")
+		fmt.Println("\n使用方法:")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> [-port=<端口>]")
+		fmt.Println("\n示例:")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=172.16.17.31 -server=172.16.17.22")
+		fmt.Println("\n运行 './tctool -h' 查看所有参数")
+		os.Exit(1)
+	}
+
+	if *localIP == "" {
+		fmt.Println("错误: 缺少必需参数 -local-ip")
+		fmt.Println("\n使用方法:")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> [-port=<端口>]")
+		fmt.Println("\n示例:")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=172.16.17.31 -server=172.16.17.22")
+		fmt.Println("\n运行 './tctool -h' 查看所有参数")
+		os.Exit(1)
+	}
+
+	if *serverIP == "" {
+		fmt.Println("错误: 缺少必需参数 -server")
+		fmt.Println("\n使用方法:")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口>")
+		fmt.Println("\n示例:")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=172.16.17.31 -server=172.16.17.22 -port=1090")
+		fmt.Println("\n运行 './tctool -h' 查看所有参数")
+		os.Exit(1)
+	}
+
+	if *serverPort == 0 {
+		fmt.Println("错误: 缺少必需参数 -port")
+		fmt.Println("\n使用方法:")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口>")
+		fmt.Println("\n示例:")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=172.16.17.31 -server=172.16.17.22 -port=1090")
+		fmt.Println("\n运行 './tctool -h' 查看所有参数")
+		os.Exit(1)
+	}
+
+	// Set global configuration variables
+	LocalUDPPort = *localPort
+	LocalIP = *localIP
+	ServerIP = *serverIP
+	ServerPort = *serverPort
+
+	// Normal mode
 	fmt.Println("========================================")
 	fmt.Println("  Tunnel Client (TC) - Go Version")
 	fmt.Println("========================================")
 	fmt.Println("Local UDP Port: ", LocalUDPPort)
+	fmt.Println("Local IP:       ", LocalIP)
 	fmt.Println("Server IP:      ", ServerIP)
 	fmt.Println("Server Port:    ", ServerPort)
-	fmt.Println("========================================\n")
+	fmt.Println("========================================")
 
 	// Initialize connection pool for multi-extension support
 	connectionPool = NewConnectionPool(MAX_EXTENSIONS)
@@ -76,7 +139,7 @@ func main() {
 	// Each extension now has its own TCP connection with dedicated reader goroutine
 	// Connections are created on-demand when SIP messages arrive
 	fmt.Println("Multi-extension mode: TCP connections created per extension on-demand")
-	fmt.Println("\nTunnel Client is running. Press Ctrl+C to exit.\n")
+	fmt.Println("Tunnel Client is running. Press Ctrl+C to exit.")
 
 	// Wait for signal
 	<-sigChan
@@ -385,7 +448,7 @@ func ConnectToServer(retryCount int) (net.Conn, error) {
 	var err error
 
 	for i := 0; i <= retryCount; i++ {
-		conn, err = net.Dial("tcp", fmt.Sprintf("%s:%d", ServerIP, ServerPort))
+		conn, err = net.Dial("tcp", net.JoinHostPort(ServerIP, strconv.Itoa(ServerPort)))
 		if err == nil {
 			return conn, nil
 		}

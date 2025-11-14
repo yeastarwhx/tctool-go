@@ -5,6 +5,16 @@
   },
   "permissions": {
     "allow": [
+      "Read",
+      "Write",
+      "Edit",
+      "Bash",
+      "Glob",
+      "Grep",
+      "Task",
+      "TodoWrite",
+      "WebFetch",
+      "WebSearch",
       "Bash(git fetch:*)",
       "Bash(nul)",
       "Bash(bash:*)",

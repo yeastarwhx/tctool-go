@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -26,6 +27,7 @@ var (
 	LocalUDPPort int
 	ServerIP     string
 	ServerPort   int
+	DebugMode    bool // Control whether to output log messages
 )
 
 // Global state
@@ -41,6 +43,7 @@ func main() {
 	localIP := flag.String("local-ip", "", "Local IP address for SIP Contact (required)")
 	serverIP := flag.String("server", "", "Tunnel server IP address (required)")
 	serverPort := flag.Int("port", 0, "Tunnel server port (required)")
+	debug := flag.Bool("debug", false, "Enable debug log output (default: false)")
 
 	flag.Parse()
 
@@ -48,9 +51,10 @@ func main() {
 	if *localPort == 0 {
 		fmt.Println("错误: 缺少必需参数 -local-port")
 		fmt.Println("\n使用方法:")
-		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> [-port=<端口>]")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-debug]")
 		fmt.Println("\n示例:")
-		fmt.Println("  ./tctool -local-port=5060 -local-ip=172.16.17.31 -server=172.16.17.22")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -debug")
 		fmt.Println("\n运行 './tctool -h' 查看所有参数")
 		os.Exit(1)
 	}
@@ -58,9 +62,10 @@ func main() {
 	if *localIP == "" {
 		fmt.Println("错误: 缺少必需参数 -local-ip")
 		fmt.Println("\n使用方法:")
-		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> [-port=<端口>]")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-debug]")
 		fmt.Println("\n示例:")
-		fmt.Println("  ./tctool -local-port=5060 -local-ip=172.16.17.31 -server=172.16.17.22")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -debug")
 		fmt.Println("\n运行 './tctool -h' 查看所有参数")
 		os.Exit(1)
 	}
@@ -68,9 +73,10 @@ func main() {
 	if *serverIP == "" {
 		fmt.Println("错误: 缺少必需参数 -server")
 		fmt.Println("\n使用方法:")
-		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口>")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-debug]")
 		fmt.Println("\n示例:")
-		fmt.Println("  ./tctool -local-port=5060 -local-ip=172.16.17.31 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -debug")
 		fmt.Println("\n运行 './tctool -h' 查看所有参数")
 		os.Exit(1)
 	}
@@ -78,9 +84,10 @@ func main() {
 	if *serverPort == 0 {
 		fmt.Println("错误: 缺少必需参数 -port")
 		fmt.Println("\n使用方法:")
-		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口>")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-debug]")
 		fmt.Println("\n示例:")
-		fmt.Println("  ./tctool -local-port=5060 -local-ip=172.16.17.31 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -debug")
 		fmt.Println("\n运行 './tctool -h' 查看所有参数")
 		os.Exit(1)
 	}
@@ -90,6 +97,12 @@ func main() {
 	LocalIP = *localIP
 	ServerIP = *serverIP
 	ServerPort = *serverPort
+	DebugMode = *debug
+
+	// Configure log output based on debug mode
+	if !DebugMode {
+		log.SetOutput(io.Discard) // Disable all log output
+	}
 
 	// Normal mode
 	fmt.Println("========================================")
@@ -99,6 +112,7 @@ func main() {
 	fmt.Println("Local IP:       ", LocalIP)
 	fmt.Println("Server IP:      ", ServerIP)
 	fmt.Println("Server Port:    ", ServerPort)
+	fmt.Println("Debug Mode:     ", DebugMode)
 	fmt.Println("========================================")
 
 	// Initialize connection pool for multi-extension support
@@ -305,7 +319,7 @@ func recvFromLocal(pm *PortManager, am *AuthManager, shutdownChan <-chan struct{
 			} else {
 				modifiedMsg = sipMsg
 			}
-
+			log.Printf("####Modified SIP for extension %s#####\n%s", extNumber, modifiedMsg)
 			// Send to extension's TCP connection
 			err = extConn.SendSIP(modifiedMsg, extConn.AuthManager.GetTSAESKey())
 			if err != nil {

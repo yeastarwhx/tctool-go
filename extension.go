@@ -16,7 +16,6 @@ import (
 // Note: serverIP and serverPort are now accessed from main.go's ServerIP and ServerPort variables
 // which are set via command line flags before any connections are made
 
-
 // ===================================================================
 // Constants for Extension Configuration
 // ===================================================================
@@ -127,7 +126,7 @@ type Extension struct {
 type ConnectionState uint32
 
 const (
-	DISCONNECTED ConnectionState = iota // No TCP connection exists
+	DISCONNECTED  ConnectionState = iota // No TCP connection exists
 	CONNECTING                           // TCP dial in progress, authentication pending
 	AUTHENTICATED                        // Handshake complete, AES keys exchanged
 	ACTIVE                               // Messages being forwarded, activity <5min
@@ -139,27 +138,27 @@ const (
 type AuthState uint32
 
 const (
-	UNAUTHENTICATED AuthState = iota // Initial state, no authentication attempted
-	AUTHENTICATING                    // Authentication request sent, waiting for response
-	AUTH_AUTHENTICATED                // Received valid ts_aeskey from server
-	FAILED                            // Authentication failed after retries
+	UNAUTHENTICATED    AuthState = iota // Initial state, no authentication attempted
+	AUTHENTICATING                      // Authentication request sent, waiting for response
+	AUTH_AUTHENTICATED                  // Received valid ts_aeskey from server
+	FAILED                              // Authentication failed after retries
 )
 
 // ExtensionConnection manages TCP connection lifecycle for one extension
 type ExtensionConnection struct {
-	Extension      Extension
-	TCPConn        net.Conn
-	State          atomic.Uint32 // ConnectionState
-	CreatedAt      time.Time
-	LastActivity   atomic.Int64 // Unix timestamp
-	HeartbeatChan  chan struct{}
-	ShutdownChan   chan struct{}
-	AuthManager    *ExtensionAuthManager
-	PortManager    *ExtensionPortManager
-	GlobalPortMgr  *PortManager // Reference to global port manager for SIP processing
-	MessageQueue   chan string  // Buffer for messages during reconnection
-	SrcSIPAddr     *net.UDPAddr // Source UDP address for this extension (where to send responses)
-	mu             sync.RWMutex
+	Extension     Extension
+	TCPConn       net.Conn
+	State         atomic.Uint32 // ConnectionState
+	CreatedAt     time.Time
+	LastActivity  atomic.Int64 // Unix timestamp
+	HeartbeatChan chan struct{}
+	ShutdownChan  chan struct{}
+	AuthManager   *ExtensionAuthManager
+	PortManager   *ExtensionPortManager
+	GlobalPortMgr *PortManager // Reference to global port manager for SIP processing
+	MessageQueue  chan string  // Buffer for messages during reconnection
+	SrcSIPAddr    *net.UDPAddr // Source UDP address for this extension (where to send responses)
+	mu            sync.RWMutex
 }
 
 // ConnectionPool manages all extension connections
@@ -388,7 +387,7 @@ func (ec *ExtensionConnection) readFromTCP() {
 
 		// Process different types of SIP messages
 		var outputMsg string
-		if (IsSIP200OK(sipMsg) || IsINVITERequest(sipMsg)) {
+		if IsSIP200OK(sipMsg) || IsINVITERequest(sipMsg) {
 			if IsSIP200OK(sipMsg) {
 				outputMsg, _ = Handle200OKFromTCP(sipMsg, ec.GlobalPortMgr)
 			} else if IsINVITERequest(sipMsg) {
@@ -408,6 +407,7 @@ func (ec *ExtensionConnection) readFromTCP() {
 		// Forward to UDP using this extension's source address
 		targetAddr := ec.GetSrcSIPAddr()
 		if targetAddr != nil {
+			log.Printf("[Extension %s] Sending SIP to UDP %s:\n%s", ec.Extension.Number, targetAddr.String(), outputMsg)
 			sendSIPToUDPAddr(outputMsg, targetAddr)
 		} else {
 			log.Printf("[Extension %s] No source address available, cannot send response", ec.Extension.Number)

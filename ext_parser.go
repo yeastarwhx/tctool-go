@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// Extension number validation regex: 3-5 digit numeric string
-var extensionRegex = regexp.MustCompile(`^[0-9]{3,5}$`)
+// Extension number validation regex: 3-10 digit numeric string
+var extensionRegex = regexp.MustCompile(`^[0-9]{3,10}$`)
 
 // ValidateExtension validates extension number format (3-5 digits numeric)
 // Returns true if valid, false otherwise
@@ -42,32 +42,48 @@ func IsSIPMethod(msg string, method string) bool {
 // ExtractSIPHeader extracts the value of a SIP header from a message
 // Returns empty string if header not found
 func ExtractSIPHeader(msg string, headerName string) string {
-	lines := strings.Split(msg, "\r\n")
-
-	// Try full header name first (e.g., "From:")
-	prefix := headerName + ":"
-	for _, line := range lines {
-		if strings.HasPrefix(line, prefix) {
-			value := strings.TrimSpace(line[len(prefix):])
-			//fmt.Printf("[DEBUG] Found header %s: %s\n", headerName, value)
-			return value
-		}
+	// Support both CRLF and LF-only messages
+	var lines []string
+	if strings.Contains(msg, "\r\n") {
+		lines = strings.Split(msg, "\r\n")
+	} else {
+		lines = strings.Split(msg, "\n")
 	}
 
-	// Try compact form (e.g., "f:" for "From:")
-	compactForm := getCompactForm(headerName)
-	if compactForm != "" {
-		prefix = compactForm + ":"
-		for _, line := range lines {
-			if strings.HasPrefix(line, prefix) {
-				value := strings.TrimSpace(line[len(prefix):])
-				//fmt.Printf("[DEBUG] Found compact header %s: %s\n", headerName, value)
+	headerNameLower := strings.ToLower(headerName)
+
+	// Try full header name first (case-insensitive)
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		// Find index of ':' to separate header and value
+		if idx := strings.Index(line, ":"); idx != -1 {
+			namePart := strings.ToLower(strings.TrimSpace(line[:idx]))
+			if namePart == headerNameLower {
+				value := strings.TrimSpace(line[idx+1:])
 				return value
 			}
 		}
 	}
 
-	fmt.Printf("[DEBUG] Header %s not found\n", headerName)
+	// Try compact form (e.g., "f:" for "From:")
+	compactForm := strings.ToLower(getCompactForm(headerName))
+	if compactForm != "" {
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimSpace(line), compactForm+":") {
+				// extract after the first ':'
+				if idx := strings.Index(line, ":"); idx != -1 {
+					value := strings.TrimSpace(line[idx+1:])
+					return value
+				}
+			}
+		}
+	}
+
 	return ""
 }
 

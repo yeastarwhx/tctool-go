@@ -8,7 +8,7 @@ import (
 
 // Variables for SIP configuration (need to take address)
 var (
-	LocalIP     = "192.168.12.18"
+	LocalIP     = "127.0.0.1"
 	ServerSDPIP = "127.0.0.1"
 )
 
@@ -154,7 +154,7 @@ func Handle200OKFromUDP(sipMsg string, pm *PortManager) (string, error) {
 			mapping.TSAudioRTCP, // New SDP audio RTCP port
 			mapping.TSVideoRTP,  // New SDP video RTP port
 			mapping.TSVideoRTCP, // New SDP video RTCP port
-			LocalIP,             // New SDP connection address
+			ServerSDPIP,         // New SDP connection address
 		)
 		if err != nil {
 			return sipMsg, err

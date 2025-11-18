@@ -24,10 +24,12 @@ const (
 
 // Configuration variables (can be set via command line flags)
 var (
-	LocalUDPPort int
-	ServerIP     string
-	ServerPort   int
-	DebugMode    bool // Control whether to output log messages
+	LocalUDPPort     int
+	ServerIP         string
+	ServerPort       int
+	DebugMode        bool // Control whether to output log messages
+	PortRangeStart   int  // Starting port for RTP/RTCP allocation
+	PortRangeSize    int  // Size of port range from start
 )
 
 // Global state
@@ -43,6 +45,8 @@ func main() {
 	localIP := flag.String("local-ip", "", "Local IP address for SIP Contact (required)")
 	serverIP := flag.String("server", "", "Tunnel server IP address (required)")
 	serverPort := flag.Int("port", 0, "Tunnel server port (required)")
+	portRangeStart := flag.Int("rtp-start-port", 20000, "Starting port for RTP/RTCP allocation (default: 20000)")
+	portRangeSize := flag.Int("rtp-port-range", 10000, "Port range size from start port (default: 10000)")
 	debug := flag.Bool("debug", false, "Enable debug log output (default: false)")
 
 	flag.Parse()
@@ -51,9 +55,10 @@ func main() {
 	if *localPort == 0 {
 		fmt.Println("错误: 缺少必需参数 -local-port")
 		fmt.Println("\n使用方法:")
-		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-debug]")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-rtp-start-port=<起始端口>] [-rtp-port-range=<范围>] [-debug]")
 		fmt.Println("\n示例:")
 		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -rtp-start-port=20000 -rtp-port-range=10000")
 		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -debug")
 		fmt.Println("\n运行 './tctool -h' 查看所有参数")
 		os.Exit(1)
@@ -62,9 +67,10 @@ func main() {
 	if *localIP == "" {
 		fmt.Println("错误: 缺少必需参数 -local-ip")
 		fmt.Println("\n使用方法:")
-		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-debug]")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-rtp-start-port=<起始端口>] [-rtp-port-range=<范围>] [-debug]")
 		fmt.Println("\n示例:")
 		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -rtp-start-port=20000 -rtp-port-range=10000")
 		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -debug")
 		fmt.Println("\n运行 './tctool -h' 查看所有参数")
 		os.Exit(1)
@@ -73,9 +79,10 @@ func main() {
 	if *serverIP == "" {
 		fmt.Println("错误: 缺少必需参数 -server")
 		fmt.Println("\n使用方法:")
-		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-debug]")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-rtp-start-port=<起始端口>] [-rtp-port-range=<范围>] [-debug]")
 		fmt.Println("\n示例:")
 		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -rtp-start-port=20000 -rtp-port-range=10000")
 		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -debug")
 		fmt.Println("\n运行 './tctool -h' 查看所有参数")
 		os.Exit(1)
@@ -84,9 +91,10 @@ func main() {
 	if *serverPort == 0 {
 		fmt.Println("错误: 缺少必需参数 -port")
 		fmt.Println("\n使用方法:")
-		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-debug]")
+		fmt.Println("  ./tctool -local-port=<端口> -local-ip=<IP地址> -server=<服务器IP> -port=<端口> [-rtp-start-port=<起始端口>] [-rtp-port-range=<范围>] [-debug]")
 		fmt.Println("\n示例:")
 		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090")
+		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -rtp-start-port=20000 -rtp-port-range=10000")
 		fmt.Println("  ./tctool -local-port=5060 -local-ip=127.0.0.1 -server=172.16.17.22 -port=1090 -debug")
 		fmt.Println("\n运行 './tctool -h' 查看所有参数")
 		os.Exit(1)
@@ -98,6 +106,19 @@ func main() {
 	ServerIP = *serverIP
 	ServerPort = *serverPort
 	DebugMode = *debug
+	PortRangeStart = *portRangeStart
+	PortRangeSize = *portRangeSize
+
+	// Validate port range
+	if PortRangeSize < 100 {
+		fmt.Println("错误: RTP端口范围太小，至少需要100个端口")
+		os.Exit(1)
+	}
+	portRangeEnd := PortRangeStart + PortRangeSize
+	if portRangeEnd > 65535 {
+		fmt.Println("错误: RTP端口范围超出有效范围 (最大65535)")
+		os.Exit(1)
+	}
 
 	// Configure log output based on debug mode
 	if !DebugMode {
@@ -112,6 +133,7 @@ func main() {
 	fmt.Println("Local IP:       ", LocalIP)
 	fmt.Println("Server IP:      ", ServerIP)
 	fmt.Println("Server Port:    ", ServerPort)
+	fmt.Println("RTP Port Range: ", fmt.Sprintf("%d-%d (%d ports)", PortRangeStart, portRangeEnd-1, PortRangeSize))
 	fmt.Println("Debug Mode:     ", DebugMode)
 	fmt.Println("========================================")
 
@@ -494,10 +516,6 @@ func (am *AuthManager) AuthenticateWithRetry(conn net.Conn, retryCount int) erro
 }
 
 // ==================== Port Manager ====================
-const (
-	TCPortStart = 20000
-	TCPortMax   = 40000
-)
 
 // PortMappingNode represents a port mapping for a call
 type PortMappingNode struct {
@@ -546,7 +564,7 @@ type PortManager struct {
 func NewPortManager() *PortManager {
 	return &PortManager{
 		mappings:          make(map[string]*PortMappingNode),
-		nextAvailablePort: TCPortStart,
+		nextAvailablePort: PortRangeStart,
 	}
 }
 
@@ -555,15 +573,61 @@ func (pm *PortManager) AllocatePortPair() (int, int, error) {
 	pm.portMutex.Lock()
 	defer pm.portMutex.Unlock()
 
-	if pm.nextAvailablePort+1 >= TCPortMax {
-		return 0, 0, errors.New("port limit reached")
+	// Use dynamic port range from configuration
+	rangeEnd := PortRangeStart + PortRangeSize
+
+	// Try to allocate a pair of consecutive ports
+	maxAttempts := PortRangeSize / 2 // Try at most half the range
+	attempts := 0
+
+	for attempts < maxAttempts {
+		// Ensure nextAvailablePort is within range
+		if pm.nextAvailablePort < PortRangeStart || pm.nextAvailablePort >= rangeEnd {
+			pm.nextAvailablePort = PortRangeStart
+		}
+
+		// Try to find an available RTP port
+		rtpPort := allocateAvailablePort(pm.nextAvailablePort)
+		if rtpPort == 0 {
+			// No available port found in entire range
+			return 0, 0, errors.New("no available ports in configured range")
+		}
+
+		// Check if the next port (RTCP) is also available
+		rtcpPort := rtpPort + 1
+		if rtcpPort >= rangeEnd {
+			// RTCP port would be out of range, try next port
+			pm.nextAvailablePort = rtpPort + 2
+			if pm.nextAvailablePort >= rangeEnd {
+				pm.nextAvailablePort = PortRangeStart
+			}
+			attempts++
+			continue
+		}
+
+		if isPortAvailable(rtcpPort) {
+			// Both ports available, update next available and return
+			pm.nextAvailablePort = rtcpPort + 1
+			if pm.nextAvailablePort >= rangeEnd {
+				pm.nextAvailablePort = PortRangeStart
+			}
+
+			if DebugMode {
+				log.Printf("[PortManager] Allocated port pair: RTP=%d, RTCP=%d", rtpPort, rtcpPort)
+			}
+
+			return rtpPort, rtcpPort, nil
+		}
+
+		// RTCP port not available, try next pair
+		pm.nextAvailablePort = rtpPort + 2
+		if pm.nextAvailablePort >= rangeEnd {
+			pm.nextAvailablePort = PortRangeStart
+		}
+		attempts++
 	}
 
-	rtpPort := pm.nextAvailablePort
-	rtcpPort := pm.nextAvailablePort + 1
-	pm.nextAvailablePort += 2
-
-	return rtpPort, rtcpPort, nil
+	return 0, 0, errors.New("failed to allocate port pair after maximum attempts")
 }
 
 // AllocatePortsForCall allocates ports for a call (audio + optional video)
@@ -783,4 +847,45 @@ func cleanupIdlePortMappings(pm *PortManager, am *AuthManager, shutdownChan <-ch
 			}
 		}
 	}
+}
+
+// ==================== Port Availability Check ====================
+
+// isPortAvailable checks if a UDP port is available for binding
+func isPortAvailable(port int) bool {
+	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return false
+	}
+
+	conn.Close()
+	return true
+}
+
+// allocateAvailablePort finds an available port within the configured range
+// Returns the allocated port or 0 if no port is available
+func allocateAvailablePort(startFrom int) int {
+	rangeEnd := PortRangeStart + PortRangeSize
+
+	// Try from startFrom to end of range
+	for port := startFrom; port < rangeEnd; port++ {
+		if isPortAvailable(port) {
+			return port
+		}
+	}
+
+	// Wrap around: try from beginning to startFrom
+	for port := PortRangeStart; port < startFrom; port++ {
+		if isPortAvailable(port) {
+			return port
+		}
+	}
+
+	// No available port found
+	return 0
 }

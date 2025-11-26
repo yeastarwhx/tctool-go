@@ -32,6 +32,29 @@ func IsCANCELRequest(msg string) bool {
 	return strings.HasPrefix(msg, "CANCEL")
 }
 
+// IsREGISTERRequest checks if message is REGISTER request
+func IsREGISTERRequest(msg string) bool {
+	return strings.HasPrefix(msg, "REGISTER")
+}
+
+// AddLinkusTypeHeader adds LinkusType: LCS header to SIP message
+func AddLinkusTypeHeader(sipMsg string) string {
+	// Find the position after the first line (Request-Line or Status-Line)
+	firstLineEnd := strings.Index(sipMsg, "\r\n")
+	if firstLineEnd == -1 {
+		// Try with just \n
+		firstLineEnd = strings.Index(sipMsg, "\n")
+		if firstLineEnd == -1 {
+			return sipMsg
+		}
+		// Insert header after first line
+		return sipMsg[:firstLineEnd+1] + "LinkusType: LTS\r\n" + sipMsg[firstLineEnd+1:]
+	}
+
+	// Insert header after first line (after \r\n)
+	return sipMsg[:firstLineEnd+2] + "LinkusType: LTS\r\n" + sipMsg[firstLineEnd+2:]
+}
+
 // HandleINVITEFromUDP handles INVITE request from UDP (PBX to Server)
 func HandleINVITEFromUDP(sipMsg string, pm *PortManager, tsAESKey string) (string, error) {
 	// Parse Call-ID

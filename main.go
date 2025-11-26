@@ -341,6 +341,12 @@ func recvFromLocal(pm *PortManager, am *AuthManager, shutdownChan <-chan struct{
 			} else {
 				modifiedMsg = sipMsg
 			}
+
+			// Add LinkusType header for REGISTER and INVITE requests
+			if IsREGISTERRequest(sipMsg) || IsINVITERequest(sipMsg) {
+				modifiedMsg = AddLinkusTypeHeader(modifiedMsg)
+			}
+
 			log.Printf("####Modified SIP for extension %s#####\n%s", extNumber, modifiedMsg)
 			// Send to extension's TCP connection
 			err = extConn.SendSIP(modifiedMsg, extConn.AuthManager.GetTSAESKey())

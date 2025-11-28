@@ -621,7 +621,7 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 			// Ensure header is exactly 80 bytes
 			headerBytes := make([]byte, HeaderSize)
 			copy(headerBytes, header)
-			log.Printf("[%s] 转发 RTP 数据到服务器 port=%d pbx_ip=%s ts_fwd_port=%d pbx_port=%d size=%d", portType, localPort, pbxIP, tsFwdPort, pbxPort, n)
+			//log.Printf("[%s] 转发 RTP 数据到服务器 port=%d pbx_ip=%s ts_fwd_port=%d pbx_port=%d size=%d", portType, localPort, pbxIP, tsFwdPort, pbxPort, n)
 
 			// Create combined buffer (header + RTP data)
 			combined := make([]byte, HeaderSize+n)

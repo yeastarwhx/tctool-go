@@ -174,6 +174,7 @@ type ExtensionAuthManager struct {
 	Extension  Extension
 	TCAESKey   string
 	TSAESKey   string
+	ServerType string        // Server type from authentication response (e.g., "sbc")
 	AuthState  atomic.Uint32 // AuthState
 	RetryCount int
 	mu         sync.RWMutex
@@ -391,7 +392,7 @@ func (ec *ExtensionConnection) readFromTCP() {
 			if IsSIP200OK(sipMsg) {
 				outputMsg, _ = Handle200OKFromTCP(sipMsg, ec.GlobalPortMgr)
 			} else if IsINVITERequest(sipMsg) {
-				outputMsg, _ = HandleINVITEFromTCP(sipMsg, ec.GlobalPortMgr, tsAESKey)
+				outputMsg, _ = HandleINVITEFromTCP(sipMsg, ec.GlobalPortMgr, tsAESKey, ec.AuthManager.GetServerType())
 			}
 		} else if IsBYERequest(sipMsg) || IsCANCELRequest(sipMsg) {
 			HandleCallTermination(sipMsg, ec.GlobalPortMgr, tsAESKey)
@@ -597,7 +598,7 @@ func (eam *ExtensionAuthManager) Authenticate(conn net.Conn) error {
 	}
 
 	// Decrypt and parse response
-	tsKey, err := parseAuthResponse(response[:n], tcKey)
+	tsKey, serverType, err := parseAuthResponse(response[:n], tcKey)
 	if err != nil {
 		eam.AuthState.Store(uint32(FAILED))
 		log.Printf("[Extension %s] Auth response parse error: %v", eam.Extension.Number, err)
@@ -610,9 +611,10 @@ func (eam *ExtensionAuthManager) Authenticate(conn net.Conn) error {
 		return ErrInvalidTSAESKey
 	}
 
-	// Store TS AES key
+	// Store TS AES key and server type
 	eam.mu.Lock()
 	eam.TSAESKey = tsKey
+	eam.ServerType = serverType
 	eam.mu.Unlock()
 
 	eam.AuthState.Store(uint32(AUTH_AUTHENTICATED))
@@ -624,6 +626,13 @@ func (eam *ExtensionAuthManager) GetTSAESKey() string {
 	eam.mu.RLock()
 	defer eam.mu.RUnlock()
 	return eam.TSAESKey
+}
+
+// GetServerType returns server type from authentication response (thread-safe)
+func (eam *ExtensionAuthManager) GetServerType() string {
+	eam.mu.RLock()
+	defer eam.mu.RUnlock()
+	return eam.ServerType
 }
 
 // ===================================================================
@@ -673,11 +682,11 @@ func buildAuthRequest(tcKey string) []byte {
 	return authReq
 }
 
-// parseAuthResponse parses authentication response and extracts TS AES key
-func parseAuthResponse(response []byte, tcKey string) (string, error) {
+// parseAuthResponse parses authentication response and extracts TS AES key and type
+func parseAuthResponse(response []byte, tcKey string) (string, string, error) {
 	// Response format: TCHeadLen (32 bytes) + encrypted JSON data
 	if len(response) < TCHeadLen {
-		return "", errors.New("response too short")
+		return "", "", errors.New("response too short")
 	}
 
 	encryptedData := response[TCHeadLen:]
@@ -685,22 +694,23 @@ func parseAuthResponse(response []byte, tcKey string) (string, error) {
 	// Decrypt with TC AES key (use raw bytes, not hex-decoded)
 	decrypted, err := AESDecryptPKCS5(encryptedData, []byte(tcKey))
 	if err != nil {
-		return "", fmt.Errorf("failed to decrypt response: %v", err)
+		return "", "", fmt.Errorf("failed to decrypt response: %v", err)
 	}
 
-	// Parse JSON to extract ts_aeskey
+	// Parse JSON to extract ts_aeskey and type
 	var authResp struct {
 		TSAESKey string `json:"ts_aeskey"`
+		Type     string `json:"type"`
 	}
 
 	err = json.Unmarshal(decrypted, &authResp)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse JSON response: %v", err)
+		return "", "", fmt.Errorf("failed to parse JSON response: %v", err)
 	}
 
 	if authResp.TSAESKey == "" {
-		return "", errors.New("ts_aeskey not found in response")
+		return "", "", errors.New("ts_aeskey not found in response")
 	}
 
-	return authResp.TSAESKey, nil
+	return authResp.TSAESKey, authResp.Type, nil
 }

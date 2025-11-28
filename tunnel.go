@@ -582,6 +582,7 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 			// This ensures we use updated values after 200 OK is received
 			node.mutex.RLock()
 			pbxIP := node.PBXAddr
+			serverType := node.ServerType
 			var tsFwdPort, pbxPort int
 
 			// Determine which port this is and get corresponding TS and PBX ports
@@ -605,7 +606,10 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 			if pbxPort == 0 || pbxIP == "" {
 				continue
 			}
-
+			// Only set pbxIP to 127.0.0.1 if server type is not "sbc"
+			if serverType != "sbc" {
+				pbxIP = "127.0.0.1"
+			}
 			// Build RTP packet header
 			// Format: #pbx_ip=%s#ts_fwd_port=%d#pbx_port=%d#
 			// - pbx_ip:       PBX IP address (from SDP c=IN IP4 line)
@@ -617,6 +621,7 @@ func handlePortForwarding(node *PortMappingNode, localPort int,
 			// Ensure header is exactly 80 bytes
 			headerBytes := make([]byte, HeaderSize)
 			copy(headerBytes, header)
+			log.Printf("[%s] 转发 RTP 数据到服务器 port=%d pbx_ip=%s ts_fwd_port=%d pbx_port=%d size=%d", portType, localPort, pbxIP, tsFwdPort, pbxPort, n)
 
 			// Create combined buffer (header + RTP data)
 			combined := make([]byte, HeaderSize+n)

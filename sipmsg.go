@@ -56,7 +56,7 @@ func AddLinkusTypeHeader(sipMsg string) string {
 }
 
 // HandleINVITEFromUDP handles INVITE request from UDP (PBX to Server)
-func HandleINVITEFromUDP(sipMsg string, pm *PortManager, tsAESKey string) (string, error) {
+func HandleINVITEFromUDP(sipMsg string, pm *PortManager, tsAESKey string, serverType string) (string, error) {
 	// Parse Call-ID
 	callID, err := ParseCallID(sipMsg)
 	if err != nil {
@@ -106,6 +106,7 @@ func HandleINVITEFromUDP(sipMsg string, pm *PortManager, tsAESKey string) (strin
 		// Real PBX ports will be updated when we receive 200 OK from TCP
 		mapping = &PortMappingNode{
 			CallID:        callID,
+			ServerType:    serverType,
 			TCAudioRTP:    tcAudioRTP,
 			TCAudioRTCP:   tcAudioRTCP,
 			TCVideoRTP:    tcVideoRTP,
@@ -189,7 +190,7 @@ func Handle200OKFromUDP(sipMsg string, pm *PortManager) (string, error) {
 }
 
 // HandleINVITEFromTCP handles INVITE request from TCP (Server to PBX)
-func HandleINVITEFromTCP(sipMsg string, pm *PortManager, tsAESKey string) (string, error) {
+func HandleINVITEFromTCP(sipMsg string, pm *PortManager, tsAESKey string, serverType string) (string, error) {
 	// Parse Call-ID
 	callID, err := ParseCallID(sipMsg)
 	if err != nil {
@@ -230,6 +231,7 @@ func HandleINVITEFromTCP(sipMsg string, pm *PortManager, tsAESKey string) (strin
 	// Create mapping with both TS and TC ports
 	mapping := &PortMappingNode{
 		CallID:        callID,
+		ServerType:    serverType,
 		PBXAddr:       sdpInfo.ConnectionAddr,
 		TCAudioRTP:    tcAudioRTP,
 		TCAudioRTCP:   tcAudioRTCP,

@@ -24,12 +24,12 @@ const (
 
 // Configuration variables (can be set via command line flags)
 var (
-	LocalUDPPort     int
-	ServerIP         string
-	ServerPort       int
-	DebugMode        bool // Control whether to output log messages
-	PortRangeStart   int  // Starting port for RTP/RTCP allocation
-	PortRangeSize    int  // Size of port range from start
+	LocalUDPPort   int
+	ServerIP       string
+	ServerPort     int
+	DebugMode      bool // Control whether to output log messages
+	PortRangeStart int  // Starting port for RTP/RTCP allocation
+	PortRangeSize  int  // Size of port range from start
 )
 
 // Global state
@@ -332,7 +332,7 @@ func recvFromLocal(pm *PortManager, am *AuthManager, shutdownChan <-chan struct{
 			// Process different types of SIP messages
 			var modifiedMsg string
 			if IsINVITERequest(sipMsg) {
-				modifiedMsg, _ = HandleINVITEFromUDP(sipMsg, pm, extConn.AuthManager.GetTSAESKey())
+				modifiedMsg, _ = HandleINVITEFromUDP(sipMsg, pm, extConn.AuthManager.GetTSAESKey(), extConn.AuthManager.GetServerType())
 			} else if IsSIP200OK(sipMsg) {
 				modifiedMsg, _ = Handle200OKFromUDP(sipMsg, pm)
 			} else if IsBYERequest(sipMsg) || IsCANCELRequest(sipMsg) {
@@ -525,8 +525,9 @@ func (am *AuthManager) AuthenticateWithRetry(conn net.Conn, retryCount int) erro
 
 // PortMappingNode represents a port mapping for a call
 type PortMappingNode struct {
-	CallID  string
-	PBXAddr string
+	CallID     string
+	PBXAddr    string
+	ServerType string // Server type from authentication response (e.g., "sbc")
 
 	// Audio ports
 	TCAudioRTP   int

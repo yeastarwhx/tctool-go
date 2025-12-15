@@ -475,21 +475,25 @@ func StartPortForwarding(node *PortMappingNode, tsAESKey string) error {
 
 	// Start audio RTP forwarding
 	if node.TCAudioRTP > 0 {
+		node.wg.Add(1)
 		go handlePortForwarding(node, node.TCAudioRTP, PortTypeAudioRTP, tsAESKey)
 	}
 
 	// Start audio RTCP forwarding
 	if node.TCAudioRTCP > 0 {
+		node.wg.Add(1)
 		go handlePortForwarding(node, node.TCAudioRTCP, PortTypeAudioRTCP, tsAESKey)
 	}
 
 	// Start video RTP forwarding
 	if node.TCVideoRTP > 0 {
+		node.wg.Add(1)
 		go handlePortForwarding(node, node.TCVideoRTP, PortTypeVideoRTP, tsAESKey)
 	}
 
 	// Start video RTCP forwarding
 	if node.TCVideoRTCP > 0 {
+		node.wg.Add(1)
 		go handlePortForwarding(node, node.TCVideoRTCP, PortTypeVideoRTCP, tsAESKey)
 	}
 
@@ -500,6 +504,9 @@ func StartPortForwarding(node *PortMappingNode, tsAESKey string) error {
 // Automatically exits if no data received for RTPIdleTimeout (5 minutes)
 func handlePortForwarding(node *PortMappingNode, localPort int,
 	portType string, tsAESKey string) {
+
+	// Ensure WaitGroup counter is decremented when goroutine exits
+	defer node.wg.Done()
 
 	// Create UDP socket
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", localPort))

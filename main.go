@@ -331,13 +331,23 @@ func recvFromLocal(pm *PortManager, am *AuthManager, shutdownChan <-chan struct{
 
 			// Process different types of SIP messages
 			var modifiedMsg string
+			var shouldAsyncCleanup bool
+			var cleanupCallID string
+			var cleanupAESKey string
+
 			if IsINVITERequest(sipMsg) {
 				modifiedMsg, _ = HandleINVITEFromUDP(sipMsg, pm, extConn.AuthManager.GetTSAESKey(), extConn.AuthManager.GetServerType())
 			} else if IsSIP200OK(sipMsg) {
 				modifiedMsg, _ = Handle200OKFromUDP(sipMsg, pm)
 			} else if IsBYERequest(sipMsg) || IsCANCELRequest(sipMsg) {
-				HandleCallTermination(sipMsg, pm, extConn.AuthManager.GetTSAESKey())
+				// Don't block on cleanup - just prepare to do it async after sending
 				modifiedMsg = sipMsg
+				callID, err := ParseCallID(sipMsg)
+				if err == nil {
+					shouldAsyncCleanup = true
+					cleanupCallID = callID
+					cleanupAESKey = extConn.AuthManager.GetTSAESKey()
+				}
 			} else {
 				modifiedMsg = sipMsg
 			}
@@ -348,10 +358,17 @@ func recvFromLocal(pm *PortManager, am *AuthManager, shutdownChan <-chan struct{
 			}
 
 			log.Printf("####Modified SIP for extension %s#####\n%s", extNumber, modifiedMsg)
-			// Send to extension's TCP connection
+			// Send to extension's TCP connection FIRST (don't block on cleanup)
 			err = extConn.SendSIP(modifiedMsg, extConn.AuthManager.GetTSAESKey())
 			if err != nil {
 				log.Printf("Failed to send SIP message for extension %s: %v", extNumber, err)
+			}
+
+			// AFTER sending, do async cleanup if it was BYE/CANCEL
+			if shouldAsyncCleanup {
+				go func(callID string, aesKey string) {
+					HandleCallTermination(sipMsg, pm, aesKey)
+				}(cleanupCallID, cleanupAESKey)
 			}
 		}
 	}
@@ -551,6 +568,7 @@ type PortMappingNode struct {
 	AudioRTCPChan chan bool
 	VideoRTPChan  chan bool
 	VideoRTCPChan chan bool
+	wg            sync.WaitGroup // Track goroutine lifecycle
 
 	CreatedAt      time.Time
 	LastActivityAt time.Time // 最后一次RTP数据活动时间
@@ -691,6 +709,9 @@ func (pm *PortManager) RemoveMapping(callID string) (*PortMappingNode, error) {
 	node, exists := pm.mappings[callID]
 	if !exists {
 		pm.mutex.Unlock()
+		if DebugMode {
+			log.Printf("[PortManager] Call-ID %s not found (may be already cleaned)", callID)
+		}
 		return nil, errors.New("mapping not found")
 	}
 	delete(pm.mappings, callID)
@@ -718,10 +739,10 @@ func (pm *PortManager) RemoveMapping(callID string) (*PortMappingNode, error) {
 		safeCloseChannel(node.VideoRTPChan)
 		safeCloseChannel(node.VideoRTCPChan)
 
-		// Wait for goroutines to exit (with socket timeout of 500ms, threads will exit within 600ms)
-		log.Printf("[PortManager] Waiting %v for goroutines to exit...", GoroutineExitTimeout)
-		time.Sleep(GoroutineExitTimeout)
-		log.Printf("[PortManager] Port cleanup completed for Call-ID: %s", callID)
+		// Wait for all goroutines to exit gracefully using WaitGroup
+		log.Printf("[PortManager] Waiting for goroutines to exit...")
+		node.wg.Wait()
+		log.Printf("[PortManager] All goroutines exited. Port cleanup completed for Call-ID: %s", callID)
 	}
 
 	return node, nil
@@ -780,12 +801,12 @@ func (pm *PortManager) StopAll(tsAESKey string) {
 			}
 		}
 
-		// Remove mapping
+		// Remove mapping (this will wait for goroutines using WaitGroup)
 		pm.RemoveMapping(callID)
 	}
 
-	// Wait for goroutines to exit
-	time.Sleep(GoroutineExitTimeout + 100*time.Millisecond)
+	// No need for additional wait, RemoveMapping already waits for each node's goroutines
+	log.Printf("[PortManager] All mappings stopped")
 }
 
 // cleanupIdlePortMappings periodically checks and cleans up idle port mappings

@@ -388,6 +388,10 @@ func (ec *ExtensionConnection) readFromTCP() {
 
 		// Process different types of SIP messages
 		var outputMsg string
+		var shouldAsyncCleanup bool
+		var cleanupCallID string
+		var cleanupAESKey string
+
 		if IsSIP200OK(sipMsg) || IsINVITERequest(sipMsg) {
 			if IsSIP200OK(sipMsg) {
 				outputMsg, _ = Handle200OKFromTCP(sipMsg, ec.GlobalPortMgr)
@@ -395,8 +399,14 @@ func (ec *ExtensionConnection) readFromTCP() {
 				outputMsg, _ = HandleINVITEFromTCP(sipMsg, ec.GlobalPortMgr, tsAESKey, ec.AuthManager.GetServerType())
 			}
 		} else if IsBYERequest(sipMsg) || IsCANCELRequest(sipMsg) {
-			HandleCallTermination(sipMsg, ec.GlobalPortMgr, tsAESKey)
+			// Don't block on cleanup - just prepare to do it async after sending
 			outputMsg = sipMsg
+			callID, err := ParseCallID(sipMsg)
+			if err == nil {
+				shouldAsyncCleanup = true
+				cleanupCallID = callID
+				cleanupAESKey = tsAESKey
+			}
 		} else {
 			outputMsg = sipMsg
 		}
@@ -405,13 +415,20 @@ func (ec *ExtensionConnection) readFromTCP() {
 			outputMsg = sipMsg
 		}
 
-		// Forward to UDP using this extension's source address
+		// Forward to UDP using this extension's source address FIRST
 		targetAddr := ec.GetSrcSIPAddr()
 		if targetAddr != nil {
 			log.Printf("[Extension %s] Sending SIP to UDP %s:\n%s", ec.Extension.Number, targetAddr.String(), outputMsg)
 			sendSIPToUDPAddr(outputMsg, targetAddr)
 		} else {
 			log.Printf("[Extension %s] No source address available, cannot send response", ec.Extension.Number)
+		}
+
+		// AFTER sending, do async cleanup if it was BYE/CANCEL
+		if shouldAsyncCleanup {
+			go func(msg string, callID string, aesKey string) {
+				HandleCallTermination(msg, ec.GlobalPortMgr, aesKey)
+			}(sipMsg, cleanupCallID, cleanupAESKey)
 		}
 	}
 }

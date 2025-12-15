@@ -382,7 +382,7 @@ func (ec *ExtensionConnection) readFromTCP() {
 		}
 
 		sipMsg := string(sipData)
-
+		log.Printf(">>> Received SIP from TS\n%s", sipMsg)
 		// Update activity
 		ec.UpdateActivity()
 
@@ -415,10 +415,16 @@ func (ec *ExtensionConnection) readFromTCP() {
 			outputMsg = sipMsg
 		}
 
+		// Modify Via port to tctool's binding port for all SIP requests
+		// (Responses don't need Via modification as they follow the Via from request)
+		if IsSIPRequest(outputMsg) {
+			outputMsg = ModifyViaPort(outputMsg, LocalUDPPort)
+		}
+
 		// Forward to UDP using this extension's source address FIRST
 		targetAddr := ec.GetSrcSIPAddr()
 		if targetAddr != nil {
-			log.Printf("[Extension %s] Sending SIP to UDP %s:\n%s", ec.Extension.Number, targetAddr.String(), outputMsg)
+			log.Printf("<<< Send to Local [Extension %s] %s:\n%s", ec.Extension.Number, targetAddr.String(), outputMsg)
 			sendSIPToUDPAddr(outputMsg, targetAddr)
 		} else {
 			log.Printf("[Extension %s] No source address available, cannot send response", ec.Extension.Number)

@@ -293,7 +293,7 @@ func recvFromLocal(pm *PortManager, am *AuthManager, shutdownChan <-chan struct{
 
 		if n > 16 {
 			sipMsg := string(buf[:n])
-			log.Printf("####Received SIP from %s#####\n%s", srcAddr.String(), sipMsg)
+			log.Printf(">>> Received SIP from Local %s\n%s", srcAddr.String(), sipMsg)
 			// Extract extension number from SIP message
 			extNumber, err := ExtractExtension(sipMsg)
 			if err != nil {
@@ -357,7 +357,7 @@ func recvFromLocal(pm *PortManager, am *AuthManager, shutdownChan <-chan struct{
 				modifiedMsg = AddLinkusTypeHeader(modifiedMsg)
 			}
 
-			log.Printf("####Modified SIP for extension %s#####\n%s", extNumber, modifiedMsg)
+			log.Printf("<<< Send to TS [extension %s]\n%s", extNumber, modifiedMsg)
 			// Send to extension's TCP connection FIRST (don't block on cleanup)
 			err = extConn.SendSIP(modifiedMsg, extConn.AuthManager.GetTSAESKey())
 			if err != nil {
@@ -404,7 +404,6 @@ func sendSIPToUDPAddr(sipData string, targetAddr *net.UDPAddr) {
 		return
 	}
 
-	log.Printf("\nSending SIP to UDP %s:\n%s", targetAddr.String(), sipData)
 	_, err := conn.WriteToUDP([]byte(sipData), targetAddr)
 	if err != nil {
 		log.Printf("Failed to send SIP to UDP: %v", err)

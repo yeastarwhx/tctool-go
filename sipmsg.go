@@ -12,9 +12,14 @@ var (
 	ServerSDPIP = "127.0.0.1"
 )
 
+// IsSIPRequest checks if message is a SIP request (not a response)
+func IsSIPRequest(msg string) bool {
+	return !strings.HasPrefix(msg, "SIP/")
+}
+
 // IsSIP200OK checks if message is SIP 200 OK response
 func IsSIP200OK(msg string) bool {
-	return strings.Contains(msg, "SIP/2.0 200 OK")
+	return strings.HasPrefix(msg, "SIP/2.0 200")
 }
 
 // IsINVITERequest checks if message is INVITE request
@@ -53,6 +58,66 @@ func AddLinkusTypeHeader(sipMsg string) string {
 
 	// Insert header after first line (after \r\n)
 	return sipMsg[:firstLineEnd+2] + "LinkusType: LTS\r\n" + sipMsg[firstLineEnd+2:]
+}
+
+// ModifyViaPort modifies the port in Via header(s) to the specified port
+// Via header format: Via: SIP/2.0/UDP 192.168.1.100:5060;branch=xxx
+func ModifyViaPort(sipMsg string, newPort int) string {
+	lines := strings.Split(sipMsg, "\r\n")
+	var result []string
+
+	for _, line := range lines {
+		// Check if this is a Via header line
+		if strings.HasPrefix(line, "Via:") || strings.HasPrefix(line, "v:") {
+			// Find the port part (look for IP:port pattern before semicolon or end)
+			// Pattern: IP:oldPort or IP:oldPort;params
+
+			// Find the position of transport protocol (UDP/TCP/TLS)
+			transportIdx := strings.Index(line, "SIP/2.0/")
+			if transportIdx == -1 {
+				result = append(result, line)
+				continue
+			}
+
+			// Find the address part after transport
+			addressStart := transportIdx + len("SIP/2.0/UDP ")
+			if idx := strings.Index(line[transportIdx:], "TCP"); idx != -1 {
+				addressStart = transportIdx + len("SIP/2.0/TCP ")
+			} else if idx := strings.Index(line[transportIdx:], "TLS"); idx != -1 {
+				addressStart = transportIdx + len("SIP/2.0/TLS ")
+			}
+
+			// Find where the address part ends (semicolon, space, or end of line)
+			remaining := line[addressStart:]
+			endIdx := len(remaining)
+			if idx := strings.Index(remaining, ";"); idx != -1 {
+				endIdx = idx
+			}
+			if idx := strings.Index(remaining, " "); idx != -1 && idx < endIdx {
+				endIdx = idx
+			}
+
+			addressPart := remaining[:endIdx]
+			afterPart := remaining[endIdx:]
+
+			// Replace port in address part
+			// Look for :port pattern
+			if colonIdx := strings.LastIndex(addressPart, ":"); colonIdx != -1 {
+				// Found port, replace it
+				ipPart := addressPart[:colonIdx]
+				newLine := line[:addressStart] + ipPart + fmt.Sprintf(":%d", newPort) + afterPart
+				result = append(result, newLine)
+			} else {
+				// No port specified, add it
+				newLine := line[:addressStart] + addressPart + fmt.Sprintf(":%d", newPort) + afterPart
+				result = append(result, newLine)
+			}
+		} else {
+			result = append(result, line)
+		}
+	}
+
+	return strings.Join(result, "\r\n")
 }
 
 // HandleINVITEFromUDP handles INVITE request from UDP (PBX to Server)
